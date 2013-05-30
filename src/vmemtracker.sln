@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2012
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vmemtracker", "vmemtracker.vcxproj", "{87F9499A-2D6A-4967-ACA5-0DE25C97A825}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vmemtest", "..\vmemtest\vmemtest.vcxproj", "{82FB4AE1-B96D-4666-91D0-FEC55AEDB824}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -13,6 +15,10 @@ Global
 		{87F9499A-2D6A-4967-ACA5-0DE25C97A825}.Debug|Win32.Build.0 = Debug|Win32
 		{87F9499A-2D6A-4967-ACA5-0DE25C97A825}.Release|Win32.ActiveCfg = Release|Win32
 		{87F9499A-2D6A-4967-ACA5-0DE25C97A825}.Release|Win32.Build.0 = Release|Win32
+		{82FB4AE1-B96D-4666-91D0-FEC55AEDB824}.Debug|Win32.ActiveCfg = Debug|Win32
+		{82FB4AE1-B96D-4666-91D0-FEC55AEDB824}.Debug|Win32.Build.0 = Debug|Win32
+		{82FB4AE1-B96D-4666-91D0-FEC55AEDB824}.Release|Win32.ActiveCfg = Release|Win32
+		{82FB4AE1-B96D-4666-91D0-FEC55AEDB824}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
