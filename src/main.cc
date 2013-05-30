@@ -2,6 +2,8 @@
 #include <winioctl.h>
 #include <RestartManager.h>
 #include <stdlib.h>
+#include <string>
+#include <map>
 
 #pragma comment(lib,"rstrtmgr.lib")
 
@@ -38,43 +40,6 @@ bool Verify(T actual, U success) {
   }
   __assume(0);
 }
-
-
-typedef LRESULT (* MsgCallBack)(HWND, WPARAM, LPARAM);
-struct MessageHandler {
-  UINT message;
-  MsgCallBack callback;
-};
-
-
-HWND MakeWindow(const wchar_t* title, ULONG style, HWND parent, 
-                HMENU menu, const SIZE& size, MessageHandler* handlers) {
-  WNDCLASSEXW wcex = {sizeof(wcex)};
-  wcex.hCursor = ::LoadCursorW(NULL, IDC_ARROW);
-  wcex.hInstance = ThisModule();
-  wcex.lpszClassName = __FILEW__;
-  wcex.lpfnWndProc = [] (HWND window, UINT message,
-                         WPARAM wparam, LPARAM lparam) -> LRESULT {
-    static MessageHandler* s_handlers =
-        reinterpret_cast<MessageHandler*>(lparam);
-    size_t ix = 0;
-    while (s_handlers[ix].message != -1) {
-      if (s_handlers[ix].message == message)
-        return s_handlers[ix].callback(window, wparam, lparam);
-      ++ix;
-    }
-
-    return ::DefWindowProcW(window, message, wparam, lparam);
-  };
-
-  wcex.lpfnWndProc(NULL, 0, 0, reinterpret_cast<UINT_PTR>(handlers));
-  ATOM atom = VerifyNot(::RegisterClassExW(&wcex), 0);
-  int pos_def = CW_USEDEFAULT;
-  return ::CreateWindowExW(0, MAKEINTATOM(atom), title, style,
-                           pos_def, pos_def, size.cx, size.cy,
-                           parent, menu, ThisModule(), NULL); 
-}
-
 
 bool WaitForFileAccess(const wchar_t* bin_to_track) {
   OVERLAPPED ov = {0};
@@ -118,16 +83,21 @@ bool WaitForFileAccess(const wchar_t* bin_to_track) {
 }
 
 struct TrackedProcess {
-  const wchar_t* name;
-  UINT pid;
-  HANDLE ph;
+  std::wstring name;
+  RM_UNIQUE_PROCESS id;
+  HANDLE process;
+  HANDLE logfile;
 
-  TrackedProcess(const wchar_t* name, UINT pid, HANDLE ph)
-      : name(name), pid(pid), ph(ph) {
+  TrackedProcess(const wchar_t* name, RM_UNIQUE_PROCESS id, HANDLE ph)
+      : name(name), id(id), process(ph), logfile(NULL) {
+  }
+  TrackedProcess()
+      : name(name), id(), process(NULL), logfile(NULL) {
   }
 };
 
-bool GetProcessesUsingResources(DWORD session_id) {
+bool GetProcesses(DWORD session_id,
+                  std::map<UINT, TrackedProcess>& tracked_map) {
   DWORD reason = 0;
   UINT n_needed = 0;
   RM_PROCESS_INFO rmpi[64];
@@ -135,24 +105,38 @@ bool GetProcessesUsingResources(DWORD session_id) {
   Verify(::RmGetList(session_id, &n_needed,
                      &n_rmpi, rmpi, &reason), ERROR_SUCCESS);
 
- if (n_rmpi) {
-   // Somebody has the file open.
-   for (size_t ix = 0; ix != n_rmpi; ++n_rmpi) {
-     HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION |
-                                    PROCESS_VM_READ,
-                                    FALSE, rmpi[ix].Process.dwProcessId);
-     if (process) {
-        FILETIME ftCreate, ftExit, ftKernel, ftUser;
-        if (::GetProcessTimes(process, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
-          if (::CompareFileTime(&rmpi[ix].Process.ProcessStartTime, &ftCreate) == 0) {
-            // Process is still alive.
+  size_t watched_count = 0;
+
+  for (size_t ix = 0; ix != n_rmpi; ++n_rmpi) {
+    const RM_UNIQUE_PROCESS up = rmpi[ix].Process;
+    if (up.dwProcessId == ::GetCurrentProcessId())
+      continue;
+    // Someone has the file open.
+    HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION |
+                                   PROCESS_VM_READ,
+                                   FALSE, up.dwProcessId);
+    if (process) {
+      FILETIME ftCreate, ftExit, ftKernel, ftUser;
+      if (::GetProcessTimes(process, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
+        if (::CompareFileTime(&up.ProcessStartTime, &ftCreate) == 0) {
+          // Process is still alive.
+          TrackedProcess& tp = tracked_map[up.dwProcessId];
+          if (!tp.process) {
+            tp = TrackedProcess();
+            continue;
           }
+
+          if (::CompareFileTime(&up.ProcessStartTime, &tp.id.ProcessStartTime) == 0) {
+
+          }
+  
+          ++watched_count;
         }
-        ::CloseHandle(process);
-     }
-   }
- } 
- return false;
+      }
+      ::CloseHandle(process);
+    }
+  }
+  return (watched_count != 0);
 }
 
 int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
@@ -163,6 +147,8 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
   const wchar_t* bin_to_track = __wargv[1];
 
+  // Restart manager initialization.
+
   DWORD session_id = 0;
   wchar_t session_key[CCH_RM_SESSION_KEY + 1] = { 0 };
   Verify(::RmStartSession(&session_id, 0, session_key), ERROR_SUCCESS);
@@ -170,36 +156,26 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
   Verify(::RmRegisterResources(session_id, 1, &bin_to_track,
                                0, NULL, 0, NULL), ERROR_SUCCESS);
 
-  if (GetProcessesUsingResources(session_id)) {
-  } else {
-   WaitForFileAccess(bin_to_track);
-  }
- 
-#if 0
-  MessageHandler msg_handlers[] = {
-    { WM_CLOSE, [] (HWND window, WPARAM, LPARAM) -> LRESULT {
-      ::PostQuitMessage(0);
-      return 0;
-    }},
 
-    { WM_ENDSESSION, [] (HWND window, WPARAM, LPARAM) -> LRESULT {
-      ::PostQuitMessage(0);
-      return 0;
-    }},
+  ::SetTimer(NULL, 666, 500, NULL); 
+  std::map<UINT, TrackedProcess> tracked_map;
 
-    {-1, NULL}
-  };
-
-  SIZE size = {200, 200};
-  HWND main_window = VerifyNot(
-    MakeWindow(L"vmt", 0, HWND_MESSAGE, NULL, size, msg_handlers), HWND(0));
 
   MSG msg = {0};
   while (::GetMessageW(&msg, NULL, 0, 0)) {
+
+    if (msg.message == WM_TIMER) {
+      if (tracked_map.empty()) {
+        if(!GetProcesses(session_id, tracked_map))
+          ::SetTimer(NULL, 666, 3000, NULL);
+      }
+    }
+
     ::DispatchMessageW(&msg);
   }
-#endif
 
 
+
+ 
   return 0;
 }
