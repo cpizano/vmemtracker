@@ -101,13 +101,73 @@ bool GetProcesses(DWORD session_id,
   return (process_count != 0);
 }
 
+size_t ComputeAvailVirtualMem(PSAPI_WORKING_SET_EX_INFORMATION* ws_map,
+                              size_t num_entries) {
+   size_t code = 0;
+   size_t data = 0;
+   size_t other = 0;
+   size_t inv = 0;
+   for (size_t ix = 0; ix != num_entries; ++ix) {
+     PSAPI_WORKING_SET_EX_BLOCK& wsb = ws_map[ix].VirtualAttributes;
+     if (!wsb.Valid) {
+       ++inv;
+       continue;
+     }
+
+     switch (wsb.Win32Protection) {
+       case PAGE_NOACCESS:
+         __debugbreak(); 
+         break;
+       case PAGE_READONLY:
+       case PAGE_READWRITE:
+       case PAGE_WRITECOPY:
+         ++data;
+         break;
+       case PAGE_EXECUTE:
+       case PAGE_EXECUTE_READ:
+       case PAGE_EXECUTE_READWRITE:
+       case PAGE_EXECUTE_WRITECOPY:
+         ++code;
+         break;
+       default: 
+         ++other;
+     };
+   }
+
+   return inv;  //code + data + other;
+}
+
 bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
+
+  const size_t kNumVMBlocks = 1024 * 16;
+  const size_t KBlockSize = (4096 * 1024) / 16;
+
+  static PSAPI_WORKING_SET_EX_INFORMATION* ws_map = nullptr;
+
   PROCESS_MEMORY_COUNTERS_EX pmcx = {sizeof(pmcx)};
   if (!::GetProcessMemoryInfo(tracked->process, 
                              reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmcx),
                              sizeof(pmcx))) {
     __debugbreak();
   }
+
+  if (!ws_map) {
+    ws_map = new PSAPI_WORKING_SET_EX_INFORMATION[kNumVMBlocks];
+    char* address = 0;
+    for (size_t ix = 0; ix != kNumVMBlocks; ++ix) {
+      ws_map[ix].VirtualAddress = address;
+      address += KBlockSize;
+    }
+  }
+
+  if (!::QueryWorkingSetEx(tracked->process,
+                           ws_map,
+                           kNumVMBlocks * sizeof(PSAPI_WORKING_SET_EX_INFORMATION))) {
+    __debugbreak();
+  }
+
+  size_t fvmb = ComputeAvailVirtualMem(ws_map, kNumVMBlocks);
+  size_t uvm = (kNumVMBlocks - fvmb) * KBlockSize;
 
   DWORD to_write = 0;
   DWORD written = 0;
@@ -132,7 +192,7 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
     }
     // Write header.
     std::stringstream hss;
-    hss << "memtrack v1.0.0 ";
+    hss << "memtrack v1.0.1 ";
     hss << " p:" << tracked->id.dwProcessId;
     ULARGE_INTEGER ptime = { 
         tracked->id.ProcessStartTime.dwLowDateTime,
@@ -147,9 +207,10 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
 
   std::stringstream oss;
   oss << ::GetTickCount64() << ": ";
-  oss << pmcx.PeakWorkingSetSize << ", ";
-  oss << pmcx.WorkingSetSize << ", ";
-  oss << pmcx.PrivateUsage << "\n";
+  oss << pmcx.PeakWorkingSetSize / 1024 << ", ";
+  oss << pmcx.WorkingSetSize / 1024 << ", ";
+  oss << pmcx.PrivateUsage / 1024 << ", ";
+  oss << uvm << "\n";
 
   DWORD status = ::WaitForSingleObject(tracked->process, 0);
   bool still_alive = (WAIT_TIMEOUT == status);

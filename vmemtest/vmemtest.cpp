@@ -13,7 +13,7 @@ int _tmain(int argc, _TCHAR* argv[]) {
   const size_t kMB_chunk = 16 * 1024 * 1024;
   const size_t kCount = 12;
   const size_t kSleep_ms = 3000;
-  size_t loops = 5;
+  size_t loops = 50;
   
   wprintf(L"test program to use with vmemtracker\n"\
           L"this program just allocates memory in a seesaw pattern\n"\
