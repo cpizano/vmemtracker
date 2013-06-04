@@ -43,6 +43,30 @@
 
 #pragma comment(lib,"rstrtmgr.lib")
 
+ 
+typedef NTSTATUS (__stdcall *NtQueryInformationProcess) (
+                                      HANDLE process,
+                                      ULONG infoclass,
+                                      void* information,
+                                      ULONG len_in,
+                                      ULONG* len_out);
+
+typedef struct _VM_COUNTERS {
+    ULONG PeakVirtualSize;
+    ULONG VirtualSize;
+    ULONG PageFaultCount;
+    ULONG PeakWorkingSetSize;
+    ULONG WorkingSetSize;
+    ULONG QuotaPeakPagedPoolUsage;
+    ULONG QuotaPagedPoolUsage;
+    ULONG QuotaPeakNonPagedPoolUsage;
+    ULONG QuotaNonPagedPoolUsage;
+    ULONG PagefileUsage;
+    ULONG PeakPagefileUsage;
+} VM_COUNTERS;
+typedef VM_COUNTERS *PVM_COUNTERS;
+
+
 template <typename T, typename U>
 bool Verify(T actual, U success) {
   if (actual == success)
@@ -212,37 +236,17 @@ void GetProcesses(DWORD session_id,
   }
 }
 
-size_t CalculateVMemusage(HANDLE process) {
-  size_t used = 0;
-  char* address = 0;
-  char* oldaddr = 0;
-  MEMORY_BASIC_INFORMATION mbi;
-  do {
-    if (!::VirtualQueryEx(process, address, &mbi, sizeof(mbi)))
-      break;
-    if (mbi.State != MEM_FREE)
-      used += mbi.RegionSize;
-    oldaddr = address;
-    address = reinterpret_cast<char*>(mbi.BaseAddress) + mbi.RegionSize;
-  } while (address > oldaddr);
-
-  return used;
+bool NtQueryMemoryUsage(HANDLE process, VM_COUNTERS* vmc) {
+  static NtQueryInformationProcess ntqip =
+    reinterpret_cast<NtQueryInformationProcess>(::GetProcAddress(
+        ::GetModuleHandleA("ntdll.dll"), "NtQueryInformationProcess"));
+  ULONG got = 0;
+  return (0 == ntqip(process, 3, vmc, sizeof(VM_COUNTERS), &got));
 }
 
 bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
-
-  PROCESS_MEMORY_COUNTERS_EX pmcx = {sizeof(pmcx)};
-  if (!::GetProcessMemoryInfo(tracked->process, 
-                              reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmcx),
-                              sizeof(pmcx))) {
-    LogEvent("GetProcessMemoryInfo error", nullptr, tracked->id.dwProcessId, ::GetLastError());
-    return false;
-  }
-
-  size_t used_vm = CalculateVMemusage(tracked->process);
-
+  // Create the file if this is the first time.
   if (tracked->logfile == INVALID_HANDLE_VALUE) {
-
     SYSTEMTIME st = {0};
     if (!::FileTimeToSystemTime(&tracked->id.ProcessStartTime, &st))
       __debugbreak();
@@ -263,7 +267,7 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
     hss << "memtrack v1.0.1 ";
     hss << " p(" << tracked->id.dwProcessId << ") ";
     hss << " t(" << PrettyPrintTime(st) << ")\n";
-    hss << "tickcount, peak_working_set, current_working_set, private_mem, virtual_memory\n";
+    hss << "tickcount, peak_working_set, current_working_set, peak_virtual_memory, virtual_memory\n";
     if (!WriteStringStream(tracked->logfile, hss)) {
       LogEvent("fileIO write error", nullptr, tracked->id.dwProcessId, ::GetLastError());
       return false;
@@ -272,32 +276,43 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
 
   std::stringstream oss;
   oss << ::GetTickCount64() << ", ";
-  oss << pmcx.PeakWorkingSetSize / 1024 << ", ";
-  oss << pmcx.WorkingSetSize / 1024 << ", ";
-  oss << pmcx.PrivateUsage / 1024 << ", ";
-  oss << used_vm / 1024 << "\n";
-
-  if ((tracked->alarm_ws == false) &&
-      pmcx.WorkingSetSize > (1024 * 1024 * 1024)) {
-    tracked->alarm_ws = true;
-    LogEvent("high workingset", nullptr,  tracked->id.dwProcessId,
-                                          tracked->id.ProcessStartTime.dwLowDateTime);
-  }
-
-  if ((tracked->alarm_vm == false) &&
-      used_vm > (512 * 1024 * 1024 * 3)) {
-    tracked->alarm_vm = true;
-    LogEvent("high virtualmem", nullptr,  tracked->id.dwProcessId,
-                                          tracked->id.ProcessStartTime.dwLowDateTime);
-  }
 
   DWORD status = ::WaitForSingleObject(tracked->process, 0);
   bool still_alive = (WAIT_TIMEOUT == status);
+
   if (!still_alive) {
+    // process is dead, don't log memory information.
     DWORD ecode = 0;
     ::GetExitCodeProcess(tracked->process, &ecode);
     LogEvent("tracking end", nullptr, tracked->id.dwProcessId, ecode);
     oss << "exit, rc=" << std::hex << ecode << "\n";
+  } else {
+    // Query windows for the memory counters and log them to disk.
+    VM_COUNTERS pmcx;
+    if (!NtQueryMemoryUsage(tracked->process, &pmcx)) {
+      LogEvent("GetProcessMemoryInfo error", nullptr, tracked->id.dwProcessId, ::GetLastError());
+      return false;
+    }
+
+    oss << pmcx.PeakWorkingSetSize / 1024 << ", ";
+    oss << pmcx.WorkingSetSize / 1024 << ", ";
+    oss << pmcx.PeakVirtualSize / 1024 << ", ";
+    oss << pmcx.VirtualSize / 1024 << "\n";
+
+    if ((tracked->alarm_ws == false) &&
+        pmcx.WorkingSetSize > (1024 * 1024 * 1024)) {
+      tracked->alarm_ws = true;
+      LogEvent("high workingset", nullptr,  tracked->id.dwProcessId,
+                                            tracked->id.ProcessStartTime.dwLowDateTime);
+    }
+
+    if ((tracked->alarm_vm == false) &&
+        pmcx.VirtualSize > (512 * 1024 * 1024 * 3)) {
+      tracked->alarm_vm = true;
+      LogEvent("high virtualmem", nullptr,  tracked->id.dwProcessId,
+                                            tracked->id.ProcessStartTime.dwLowDateTime);
+    }
+
   }
 
   WriteStringStream(tracked->logfile, oss);
@@ -315,6 +330,11 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
   const wchar_t* dir_for_logs = __wargv[1];
   const wchar_t* bin_to_track = __wargv[2];
+
+  if (!::CreateDirectoryW(dir_for_logs, NULL)) {
+    if (::GetLastError() != ERROR_ALREADY_EXISTS)
+      return 1;
+  }
 
   const DWORD kLongInterval =  4000;
   const DWORD kShortInterval = 1000;

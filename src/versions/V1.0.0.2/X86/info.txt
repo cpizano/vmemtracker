@@ -1,0 +1,2 @@
+vmemtracker 1.0.0.2 (6/4/2013) is open source at:
+https://github.com/cpizano/vmemtracker
