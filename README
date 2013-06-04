@@ -1,0 +1,73 @@
+vmemtracker is a relatively simple application that allows you to track the usage of memory
+of an application running on Windows Vista and above.
+
+vmemtracker runs in the background and with very little performance impact
+logs in a csv formated file the memory usage of an app specified by its path
+on disk.
+
+USAGE
+
+The ideal scenario is to have vmemtracker as an auto start application. So it
+runs in the background all the time. It takes its parameters from the command
+line as follows;
+
+   vmemtracker.exe <dir_for_log> <app_to_track>
+   
+For example :
+   vmemtracker.exe f:\test\vmem "C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\link.exe"
+
+Tracks Microsoft Vs2010 linker memory usage, writting log files to the f:\test\vmem folder, for example
+it creates this file:
+  "Microsoft® Incremental Linker_2013_06_04_0143_fb8dfac5.csv"
+
+Which contains:
+
+  tickcount, peak_working_set, current_working_set, private_mem, virtual_memory
+  12032420609, 387712, 387368, 151232, 1115264
+  12032421671, 429064, 428896, 168668, 1136056
+  12032422687, 434612, 20, 0, 0
+  exit, rc=0
+
+The first number is the tickcount and it is basically a timestamp relative to the first one, in miliseconds.
+The second number is the peak working set in KB the second one is the working set in KB the 3rd one is the
+private memory (non shareable) in KB and the last one is the virtual memory with counts in KB how used is
+the address space. You can have low working set but high virtual memory if you have 'reserved' but not commited
+memory pages.
+
+The last entry indicates the process being tracked exited with an exit code of zero.
+
+vmemtracker also creates a log file (in the same directory) for itself which can be consulted to find out events
+during its run, for example, the file for that run is:
+  vmemtracker__2013_06_04_0141_a646d7cb.csv
+
+Which contains:
+  
+  12032420578, tracking start, 9864, fb8dfac5
+  12032422687, tracking end, 9864, 0
+
+The first line means that it found a process to track with process id 9864 and it is tracking its memory with a file
+that starts with the name and ends in _fb8dfac5.csv. The second line is that the tracking has ended because the process
+exited with exit code 0.
+
+The fb8dfac5 value is the low order 4 bytes of the process creation time. This number plus the process id is considered
+as the a 'good enough' unique process identifier. 
+
+CAVEATS
+
+vmemtracker only works on Windows Vista and above. I have only tested it on Windows 7 and Windows 8.
+
+vmemtracker, when no app of interest is running it only wakes up every 4 seconds, so it can miss processes that are
+short lived. You can modify that behavior by altering kLongInterval constant. Once an app of interest has been detected
+it measures the memory every second and that can be changed by altering kShortInterval constant.
+
+BUILDING THE CODE
+
+vmemtracker only builds with VS2012, probably you need update 1 or better. The sln and vcprojx are included. You will also
+need a resent Windows SDK.
+
+LICENSE
+
+vmemtracker is released under the 2-clause license ("Simplified BSD License" or "FreeBSD License"), see main.cc for
+the actual license.
+
+Enjoy.

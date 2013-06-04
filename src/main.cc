@@ -1,4 +1,31 @@
-// main.cc this is the entire vmemtracker application, which tracks
+//  Copyright (c) 2013, Carlos Pizano (carlos.pizano@gmail.com)
+//  All rights reserved.
+//  
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are met: 
+//  
+//  1. Redistributions of source code must retain the above copyright notice, this
+//     list of conditions and the following disclaimer. 
+//  2. Redistributions in binary form must reproduce the above copyright notice,
+//     this list of conditions and the following disclaimer in the documentation
+//     and/or other materials provided with the distribution. 
+//  
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+//  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+//  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+//  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+//  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+//  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+//  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//  
+//  The views and conclusions contained in the software and documentation are those
+//  of the authors and should not be interpreted as representing official policies, 
+//  either expressed or implied, of the FreeBSD Project.
+
+// main.cc: this is the entire vmemtracker application, which tracks
 // a set of binaries use of memory across time, generating log files
 // in csv format.
 
@@ -289,6 +316,9 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
   const wchar_t* dir_for_logs = __wargv[1];
   const wchar_t* bin_to_track = __wargv[2];
 
+  const DWORD kLongInterval =  4000;
+  const DWORD kShortInterval = 1000;
+
   DWORD session_id = 0;
   wchar_t session_key[CCH_RM_SESSION_KEY + 1] = { 0 };
 
@@ -309,7 +339,7 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
     while (big_loop_count) {
       GetProcesses(session_id, tracked);
       if (tracked.empty()) {
-        sleep_interval = 3000;
+        sleep_interval = kLongInterval;
         --big_loop_count;
       } else {
         max_count = max(tracked.size(), max_count);
@@ -319,7 +349,7 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
           else
             ++it;
         }
-        sleep_interval = 1000;
+        sleep_interval = kShortInterval;
       }
       ::Sleep(sleep_interval);
     }
@@ -328,7 +358,7 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
     // process handles and accumulates processes (with status != RmStatusRunning) 
     // which is very confusing for the code.
     ::RmEndSession(session_id);
-    ::Sleep(4000);
+    ::Sleep(kShortInterval * 2);
   }
  
   return 0;
