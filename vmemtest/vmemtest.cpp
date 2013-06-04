@@ -1,5 +1,6 @@
-// vmemtest.cpp : Defines the entry point for the console application.
-//
+// vmemtest.cpp
+// Simple application that uses memory in predictable ways, it is
+// meant to be used for manual testing memory trackers.
 
 #include <SDKDDKVer.h>
 #include <Windows.h>
@@ -29,18 +30,22 @@ int _tmain(int argc, _TCHAR* argv[]) {
     size_t count = kCount;
     while (count) {
 #if 0
+      // In this mode we allocate heap memory and then we free it.
       char* alloc = new (std::nothrow) char[kMB_chunk];
       if (!alloc) {
         wprintf(L"error: failed allocating %d\n", kMB_chunk);
         exit(1);
       }
       memory.push_back(scoped_mem(alloc));
-#else
-      DWORD at = (count%2) ?  MEM_RESERVE | MEM_COMMIT : MEM_RESERVE;
-      void* p = ::VirtualAlloc(NULL, 64 * 1024, at, PAGE_READWRITE);
-#endif
       wprintf(L".");
-      _sleep(kSleep_ms);
+#else
+      // In this mode we allocate virtual memory, sometimes
+      // commited and sometimes reserved and never free it.
+      DWORD at = (count%2) ?  MEM_RESERVE | MEM_COMMIT : MEM_RESERVE;
+      void* p = ::VirtualAlloc(NULL, 5 * 64 * 1024, at, PAGE_READWRITE);
+      wprintf(L"+");
+#endif
+      ::Sleep(kSleep_ms);
       --count;
     }
     wprintf(L"\n- freeing %d bytes\n", kMB_chunk * kCount);
