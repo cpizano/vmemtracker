@@ -91,6 +91,19 @@ inline typename string_type::value_type* WriteInto(string_type* str,
   return &((*str)[0]);
 }
 
+bool ProcessSingleton(const wchar_t* logs_dir) {
+  std::wstring name(logs_dir);
+  std::replace(name.begin(), name.end(), '\\', '!');
+  HANDLE h = ::CreateEventExW(NULL, name.c_str(), 0, EVENT_ALL_ACCESS);
+  if (!h)
+    return false;
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    ::CloseHandle(h);
+    return false;
+  }
+  return true;
+}
+
 std::wstring MakeFileName(const SYSTEMTIME& st, const wchar_t* name, DWORD lotime) {
   std::wstring result;
   wsprintf(WriteInto(&result, 512), L"%s_%d_%02d_%02d_%02d%02d_%x.csv", name,
@@ -331,6 +344,12 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
   const wchar_t* dir_for_logs = __wargv[1];
   const wchar_t* bin_to_track = __wargv[2];
+
+
+  if (!ProcessSingleton(dir_for_logs)) {
+    wprintf(L"program already running, use a different log directory\n");
+    return 1;
+  }
 
   if (!::CreateDirectoryW(dir_for_logs, NULL)) {
     if (::GetLastError() != ERROR_ALREADY_EXISTS)
