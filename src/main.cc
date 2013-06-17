@@ -335,11 +335,13 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
 }
 
  
-void DoTrackLoop(const wchar_t* dir_for_logs, DWORD session_id, std::vector<TrackedPtr>& tracked) {
+size_t DoTrackLoop(const wchar_t* dir_for_logs, DWORD session_id, std::vector<TrackedPtr>& tracked) {
+  // If no activity check every 4 seconds.
   const DWORD kLongInterval =  4000;
+  // If activity, check faster at 1 second.
   const DWORD kShortInterval = 1000;
 
-  DWORD sleep_interval = 200;
+  DWORD sleep_interval = kShortInterval;
   size_t max_count = 0;
   size_t big_loop_count = 300;
 
@@ -360,7 +362,7 @@ void DoTrackLoop(const wchar_t* dir_for_logs, DWORD session_id, std::vector<Trac
     }
     ::Sleep(sleep_interval);
   }
-  LogEvent("big loop", nullptr, session_id, max_count);
+  return max_count;
 }
 
 void TrackForever(const wchar_t* dir_for_logs, const wchar_t* bin_to_track) {
@@ -373,12 +375,12 @@ void TrackForever(const wchar_t* dir_for_logs, const wchar_t* bin_to_track) {
     Verify(::RmStartSession(&session_id, 0, session_key), ERROR_SUCCESS);
     Verify(::RmRegisterResources(session_id, 1, &bin_to_track,
                                   0, NULL, 0, NULL), ERROR_SUCCESS);
-
-    DoTrackLoop(dir_for_logs, session_id, tracked);
+    // Start tracking.
+    size_t max_count = DoTrackLoop(dir_for_logs, session_id, tracked);
     // We need to close the restart session every so often because it leaks
-    // process handles and accumulates processes (with status != RmStatusRunning) 
-    // which is very confusing for the code.
+    // process handles and accumulates processes (with status != RmStatusRunning).
     ::RmEndSession(session_id);
+    LogEvent("loop", nullptr, session_id, max_count);
     ::Sleep(2000);
   }
 }
@@ -397,7 +399,7 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
 
   if (!ProcessSingleton(bin_to_track)) {
-    wprintf(L"running program already tracking that file\n");
+    wprintf(L"running program already tracking that binary\n");
     return 1;
   }
 
