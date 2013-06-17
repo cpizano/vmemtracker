@@ -91,9 +91,10 @@ inline typename string_type::value_type* WriteInto(string_type* str,
   return &((*str)[0]);
 }
 
-bool ProcessSingleton(const wchar_t* logs_dir) {
-  std::wstring name(logs_dir);
+bool ProcessSingleton(const wchar_t* filename) {
+  std::wstring name(filename);
   std::replace(name.begin(), name.end(), '\\', '!');
+  std::replace(name.begin(), name.end(), ':', '@');
   HANDLE h = ::CreateEventExW(NULL, name.c_str(), 0, EVENT_ALL_ACCESS);
   if (!h)
     return false;
@@ -346,8 +347,8 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
   const wchar_t* bin_to_track = __wargv[2];
 
 
-  if (!ProcessSingleton(dir_for_logs)) {
-    wprintf(L"program already running, use a different log directory\n");
+  if (!ProcessSingleton(bin_to_track)) {
+    wprintf(L"running program already tracking that file\n");
     return 1;
   }
 
