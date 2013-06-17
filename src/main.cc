@@ -197,7 +197,8 @@ void GetProcesses(DWORD session_id,
       continue;
 
     const RM_UNIQUE_PROCESS up = rmpi[ix].Process;
-    if (up.dwProcessId == ::GetCurrentProcessId())
+    if (up.dwProcessId == ::GetCurrentProcessId() ||
+        (up.dwProcessId  < 8))
       continue;
 
     auto it = std::find_if(begin(tracked), end(tracked),
