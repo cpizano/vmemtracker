@@ -334,6 +334,55 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
   return still_alive;
 }
 
+ 
+void DoTrackLoop(const wchar_t* dir_for_logs, DWORD session_id, std::vector<TrackedPtr>& tracked) {
+  const DWORD kLongInterval =  4000;
+  const DWORD kShortInterval = 1000;
+
+  DWORD sleep_interval = 200;
+  size_t max_count = 0;
+  size_t big_loop_count = 300;
+
+  while (big_loop_count) {
+    GetProcesses(session_id, tracked);
+    if (tracked.empty()) {
+      sleep_interval = kLongInterval;
+      --big_loop_count;
+    } else {
+      max_count = max(tracked.size(), max_count);
+      for (auto it = begin(tracked); it != end(tracked);) {
+        if (!LogMemUsage(dir_for_logs, it->get()))
+          it = tracked.erase(it);
+        else
+          ++it;
+      }
+      sleep_interval = kShortInterval;
+    }
+    ::Sleep(sleep_interval);
+  }
+  LogEvent("big loop", nullptr, session_id, max_count);
+}
+
+void TrackForever(const wchar_t* dir_for_logs, const wchar_t* bin_to_track) {
+  std::vector<TrackedPtr> tracked;
+
+  DWORD session_id = 0;
+  wchar_t session_key[CCH_RM_SESSION_KEY + 1] = { 0 };
+
+  while (true) {
+    Verify(::RmStartSession(&session_id, 0, session_key), ERROR_SUCCESS);
+    Verify(::RmRegisterResources(session_id, 1, &bin_to_track,
+                                  0, NULL, 0, NULL), ERROR_SUCCESS);
+
+    DoTrackLoop(dir_for_logs, session_id, tracked);
+    // We need to close the restart session every so often because it leaks
+    // process handles and accumulates processes (with status != RmStatusRunning) 
+    // which is very confusing for the code.
+    ::RmEndSession(session_id);
+    ::Sleep(2000);
+  }
+}
+
 int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
   if (__argc != 3) {
@@ -357,49 +406,13 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
       return 1;
   }
 
-  const DWORD kLongInterval =  4000;
-  const DWORD kShortInterval = 1000;
-
-  DWORD session_id = 0;
-  wchar_t session_key[CCH_RM_SESSION_KEY + 1] = { 0 };
-
-  std::vector<TrackedPtr> tracked;
-  DWORD sleep_interval = 200;
-  size_t max_count = 0;
-
   LogEvent(reinterpret_cast<const char*>(dir_for_logs), nullptr, 0, 0);
 
-  while (true) {
-    Verify(::RmStartSession(&session_id, 0, session_key), ERROR_SUCCESS);
-    Verify(::RmRegisterResources(session_id, 1, &bin_to_track,
-                                 0, NULL, 0, NULL), ERROR_SUCCESS);
-    size_t big_loop_count = 300;
+  __try {
+    TrackForever(dir_for_logs, bin_to_track);
 
-    LogEvent("big loop", nullptr, session_id, max_count);
-
-    while (big_loop_count) {
-      GetProcesses(session_id, tracked);
-      if (tracked.empty()) {
-        sleep_interval = kLongInterval;
-        --big_loop_count;
-      } else {
-        max_count = max(tracked.size(), max_count);
-        for (auto it = begin(tracked); it != end(tracked);) {
-          if (!LogMemUsage(dir_for_logs, it->get()))
-            it = tracked.erase(it);
-          else
-            ++it;
-        }
-        sleep_interval = kShortInterval;
-      }
-      ::Sleep(sleep_interval);
-    }
-
-    // We need to close the restart session every so often because it leaks
-    // process handles and accumulates processes (with status != RmStatusRunning) 
-    // which is very confusing for the code.
-    ::RmEndSession(session_id);
-    ::Sleep(kShortInterval * 2);
+  } __except(EXCEPTION_EXECUTE_HANDLER) {
+    LogEvent("fatal exception", nullptr, GetExceptionCode(), 0);
   }
  
   return 0;
