@@ -1,7 +1,7 @@
 vmemtracker is a relatively simple application that allows you to track the usage of memory
 of an application running on Windows Vista and above.
 
-vmemtracker runs in the background and with very little performance impact
+vmemtracker runs in the background and with very little performance impact. It
 logs in a csv formated file the memory usage of an app specified by its path
 on disk.
 
@@ -22,15 +22,15 @@ it creates this file:
 
 Which contains:
 
-  tickcount, peak_working_set, current_working_set, private_mem, virtual_memory
+  tickcount, peak_working_set, current_working_set, peak_virtual_memory, virtual_memory
   12032420609, 387712, 387368, 151232, 1115264
   12032421671, 429064, 428896, 168668, 1136056
   12032422687, 434612, 20, 0, 0
   exit, rc=0
 
-The first number is the tickcount and it is basically a timestamp relative to the first one, in miliseconds.
+The first number is the tickcount and it is basically a timestamp relative to the first one on the file (in miliseconds).
 The second number is the peak working set in KB the second one is the working set in KB the 3rd one is the
-private memory (non shareable) in KB and the last one is the virtual memory with counts in KB how used is
+peak virtual memory in KB and the last one is the virtual memory with counts in KB how used is
 the address space. You can have low working set but high virtual memory if you have 'reserved' but not commited
 memory pages.
 
@@ -52,6 +52,9 @@ exited with exit code 0.
 The fb8dfac5 value is the low order 4 bytes of the process creation time. This number plus the process id is considered
 as the a 'good enough' unique process identifier. 
 
+This file can also contain 'warnings' when a tracked app uses too much memory. Like 'high workingset' or 'high virtualmem'.
+Consult the source for current settings.
+
 CAVEATS
 
 vmemtracker only works on Windows Vista and above. I have only tested it on Windows 7 and Windows 8.
@@ -59,6 +62,8 @@ vmemtracker only works on Windows Vista and above. I have only tested it on Wind
 vmemtracker, when no app of interest is running it only wakes up every 4 seconds, so it can miss processes that are
 short lived. You can modify that behavior by altering kLongInterval constant. Once an app of interest has been detected
 it measures the memory every second and that can be changed by altering kShortInterval constant.
+
+This app has logic to detect is a another instance tracking the same file is running. It will exit inmediately if so.
 
 BUILDING THE CODE
 
