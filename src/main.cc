@@ -41,9 +41,9 @@
 #include <memory>
 #include <sstream>
 
-#pragma comment(lib,"rstrtmgr.lib")
+#pragma comment(lib, "rstrtmgr.lib")
+#pragma comment(lib, "version.lib")
 
- 
 typedef NTSTATUS (__stdcall *NtQueryInformationProcess) (
                                       HANDLE process,
                                       ULONG infoclass,
@@ -91,6 +91,59 @@ inline typename string_type::value_type* WriteInto(string_type* str,
   return &((*str)[0]);
 }
 
+BOOL WriteStringStream(HANDLE file, std::stringstream& ss) {
+  ss.flush();
+  DWORD to_write = ss.str().size();
+  DWORD written;
+  return ::WriteFile(file, ss.str().c_str(), to_write, &written, NULL);
+}
+
+class LogVersionIfo {
+public:
+  LogVersionIfo(const wchar_t* file) {
+    s_file_ = file;
+  }
+
+static void CALLBACK VersionLog(ULONG_PTR log_handle) {
+  // This is an APC and as such is it dispatched during a SleepEx so
+  // it is ok to sleep a bit more here. Mostly because we fear that
+  // the file |s_file_| is still not fully cooked.
+  ::Sleep(500);
+
+  HANDLE log_file = reinterpret_cast<HANDLE>(log_handle);
+  char* buf = nullptr;
+  DWORD visize = ::GetFileVersionInfoSize(s_file_, NULL);
+  if (visize) {
+    buf = new char[visize];
+    if (::GetFileVersionInfo(s_file_, 0, visize, buf)) {
+      UINT len = 0;
+      VS_FIXEDFILEINFO* ffinfo = nullptr;
+      std::stringstream ss;
+      ss << "version, ";
+      if (::VerQueryValue(buf, L"\\", reinterpret_cast<void**>(&ffinfo), &len)) {
+        ss << ((ffinfo->dwFileVersionMS >> 16 ) & 0xffff) << ", ";
+        ss << ((ffinfo->dwFileVersionMS) & 0xffff) << ", ";
+        ss << ((ffinfo->dwFileVersionLS >> 16 ) & 0xffff) << ", ";
+        ss << ((ffinfo->dwFileVersionLS) & 0xffff) << "\n";
+      } else {
+        ss << "none, " << ::GetLastError(); 
+      }
+      WriteStringStream(log_file, ss);
+    }
+  }
+
+  if (buf)
+    delete [] buf;
+  ::CloseHandle(log_file);
+}
+
+private:
+static const wchar_t* s_file_;
+};
+
+const wchar_t* LogVersionIfo::s_file_ = NULL;
+
+
 bool ProcessSingleton(const wchar_t* filename) {
   std::wstring name(filename);
   std::replace(name.begin(), name.end(), '\\', '!');
@@ -123,13 +176,6 @@ std::string PrettyPrintTime(const SYSTEMTIME& st) {
   return result_date + result_time;
 }
 
-BOOL WriteStringStream(HANDLE file, std::stringstream& ss) {
-  ss.flush();
-  DWORD to_write = ss.str().size();
-  DWORD written;
-  return ::WriteFile(file, ss.str().c_str(), to_write, &written, NULL);
-}
-
 void LogEvent(const char* str1, const char* str2, size_t extra1, size_t extra2) {
   static HANDLE file = INVALID_HANDLE_VALUE;
 
@@ -152,7 +198,7 @@ void LogEvent(const char* str1, const char* str2, size_t extra1, size_t extra2) 
       __debugbreak();
 
     std::stringstream hss;
-    hss << "vmemtrack event log";
+    hss << "vmemtrack 1.0.0.3 event log";
     hss << " p(" << ::GetCurrentProcessId() << ") ";
     hss << " t(" << PrettyPrintTime(st) << ")";
 
@@ -187,7 +233,8 @@ struct TrackedProcess {
 
   ~TrackedProcess() {
     ::CloseHandle(process);
-    ::CloseHandle(logfile);
+    if (logfile != INVALID_HANDLE_VALUE)
+      ::CloseHandle(logfile);
   }
 };
 
@@ -279,7 +326,7 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
     }
     // Write header.
     std::stringstream hss;
-    hss << "memtrack v1.0.1 ";
+    hss << "memtrack v1.0.0.3 ";
     hss << " p(" << tracked->id.dwProcessId << ") ";
     hss << " t(" << PrettyPrintTime(st) << ")\n";
     hss << "tickcount, peak_working_set, current_working_set, peak_virtual_memory, virtual_memory\n";
@@ -301,6 +348,13 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
     ::GetExitCodeProcess(tracked->process, &ecode);
     LogEvent("tracking end", nullptr, tracked->id.dwProcessId, ecode);
     oss << "exit, rc=" << std::hex << ecode << "\n";
+    WriteStringStream(tracked->logfile, oss);
+
+    // Take ownership of the log file and give it to the the LogVersionInfo object.
+    ::QueueUserAPC(&LogVersionIfo::VersionLog, ::GetCurrentThread(),
+                   reinterpret_cast<ULONG_PTR>(tracked->logfile));
+    tracked->logfile = INVALID_HANDLE_VALUE;
+
   } else {
     // Query windows for the memory counters and log them to disk.
     VM_COUNTERS pmcx;
@@ -327,10 +381,9 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
       LogEvent("high virtualmem", nullptr,  tracked->id.dwProcessId,
                                             tracked->id.ProcessStartTime.dwLowDateTime);
     }
-
+    WriteStringStream(tracked->logfile, oss);
   }
 
-  WriteStringStream(tracked->logfile, oss);
   return still_alive;
 }
 
@@ -360,13 +413,16 @@ size_t DoTrackLoop(const wchar_t* dir_for_logs, DWORD session_id, std::vector<Tr
       }
       sleep_interval = kShortInterval;
     }
-    ::Sleep(sleep_interval);
+    // The aleartable sleep allows the APC dispatching tht can be
+    // scheduled deep in LogMemUsage.
+    ::SleepEx(sleep_interval, TRUE);
   }
   return max_count;
 }
 
 void TrackForever(const wchar_t* dir_for_logs, const wchar_t* bin_to_track) {
   std::vector<TrackedPtr> tracked;
+  LogVersionIfo version_info(bin_to_track);
 
   DWORD session_id = 0;
   wchar_t session_key[CCH_RM_SESSION_KEY + 1] = { 0 };
@@ -377,13 +433,18 @@ void TrackForever(const wchar_t* dir_for_logs, const wchar_t* bin_to_track) {
                                   0, NULL, 0, NULL), ERROR_SUCCESS);
     // Start tracking.
     size_t max_count = DoTrackLoop(dir_for_logs, session_id, tracked);
-    // We need to close the restart session every so often because it leaks
-    // process handles and accumulates processes (with status != RmStatusRunning).
+    // We need to close the restart session every so often because RmRegisterResources
+    // seem to leak process handles and accumulates processes (with status != RmStatusRunning).
     ::RmEndSession(session_id);
     LogEvent("loop", nullptr, session_id, max_count);
-    ::Sleep(2000);
+    ::SleepEx(2000, TRUE);
   }
 }
+
+// The most interesting part of this progrma is that is single threaded yet it
+// it can track multiple processes at the same time. The idea here is to avoid
+// using too many cores because it is used to track some processor heavy processes
+// like the microsoft toolchain.
 
 int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
@@ -396,7 +457,6 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
 
   const wchar_t* dir_for_logs = __wargv[1];
   const wchar_t* bin_to_track = __wargv[2];
-
 
   if (!ProcessSingleton(bin_to_track)) {
     wprintf(L"running program already tracking that binary\n");
@@ -414,7 +474,8 @@ int __stdcall wWinMain(HINSTANCE module, HINSTANCE, wchar_t* cc, int) {
     TrackForever(dir_for_logs, bin_to_track);
 
   } __except(EXCEPTION_EXECUTE_HANDLER) {
-    LogEvent("fatal exception", nullptr, GetExceptionCode(), 0);
+    LogEvent("fatal exception", nullptr, 0, GetExceptionCode());
+    return 1;
   }
  
   return 0;
