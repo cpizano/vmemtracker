@@ -29,6 +29,8 @@
 // a set of binaries use of memory across time, generating log files
 // in csv format.
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <Windows.h>
 #include <Psapi.h>
 #include <winioctl.h>
@@ -40,6 +42,7 @@
 #include <vector>
 #include <memory>
 #include <sstream>
+#include <fstream>
 
 #pragma comment(lib, "rstrtmgr.lib")
 #pragma comment(lib, "version.lib")
@@ -98,6 +101,20 @@ BOOL WriteStringStream(HANDLE file, std::stringstream& ss) {
   return ::WriteFile(file, ss.str().c_str(), to_write, &written, NULL);
 }
 
+bool ReadChromeVersionFile(const wchar_t* version_file, std::stringstream* buffer) {
+  std::ifstream file(version_file);
+  if (file) {
+    std::stringstream temp;
+    temp << file.rdbuf();
+    file.close();
+    std::string temp_str = temp.str();
+    std::replace(temp_str.begin(), temp_str.end(), '\n', ',');
+    buffer->str(temp_str);
+    return true;
+  }
+  return false;
+}
+
 class LogVersionIfo {
 public:
   LogVersionIfo(const wchar_t* file) {
@@ -105,12 +122,43 @@ public:
   }
 
 static void CALLBACK VersionLog(ULONG_PTR log_handle) {
+  HANDLE log_file = reinterpret_cast<HANDLE>(log_handle);
+
+  // Try to get version info from the source file. If that fails,
+  // then try to extract from the binary. We try to avoid opening
+  // the binary because other things (manifest embedding) are racing
+  // with the close of our run, so we might cause them to fail by
+  // having the binary open.
+  wchar_t drive[_MAX_DRIVE];
+  wchar_t dir[_MAX_DIR];
+  wchar_t fname[_MAX_FNAME];
+  wchar_t ext[_MAX_EXT];
+  _wsplitpath(s_file_, drive, dir, fname, ext);
+  std::wstring dir_suffix = L"..";
+  for (int i = 0; i < 10; ++i) {
+    wchar_t version_path[_MAX_PATH];
+    _wmakepath(version_path, drive, (dir + dir_suffix + L"\\chrome").c_str(), L"VERSION", L"");
+    std::stringstream buffer;
+    if (ReadChromeVersionFile(version_path, &buffer)) {
+      std::stringstream ss;
+      ss << "versionfile, ";
+      WriteStringStream(log_file, ss);
+      WriteStringStream(log_file, buffer);
+      goto done;
+    }
+
+    // Go up a level and try again.
+    dir_suffix += L"\\..";
+  }
+
+  // Otherwise, we didn't find anything, fallback to retrieving from the
+  // binary via the version API.
+
   // This is an APC and as such is it dispatched during a SleepEx so
   // it is ok to sleep a bit more here. Mostly because we fear that
   // the file |s_file_| is still not fully cooked.
   ::Sleep(500);
 
-  HANDLE log_file = reinterpret_cast<HANDLE>(log_handle);
   char* buf = nullptr;
   DWORD visize = ::GetFileVersionInfoSize(s_file_, NULL);
   if (visize) {
@@ -134,6 +182,7 @@ static void CALLBACK VersionLog(ULONG_PTR log_handle) {
 
   if (buf)
     delete [] buf;
+ done:;
   ::CloseHandle(log_file);
 }
 
