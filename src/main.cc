@@ -247,7 +247,7 @@ void LogEvent(const char* str1, const char* str2, size_t extra1, size_t extra2) 
       __debugbreak();
 
     std::stringstream hss;
-    hss << "vmemtrack 1.0.0.3 event log";
+    hss << "vmemtrack 1.0.0.4 event log";
     hss << " p(" << ::GetCurrentProcessId() << ") ";
     hss << " t(" << PrettyPrintTime(st) << ")";
 
@@ -375,7 +375,7 @@ bool LogMemUsage(const wchar_t* dir, TrackedProcess* tracked) {
     }
     // Write header.
     std::stringstream hss;
-    hss << "memtrack v1.0.0.3 ";
+    hss << "memtrack v1.0.0.4 ";
     hss << " p(" << tracked->id.dwProcessId << ") ";
     hss << " t(" << PrettyPrintTime(st) << ")\n";
     hss << "tickcount, peak_working_set, current_working_set, peak_virtual_memory, virtual_memory\n";
